@@ -40,45 +40,61 @@
         max-height: none !important;
         border: 0;
       }
+
+      #loadError {
+        position: fixed;
+        z-index: 10;
+        inset: auto 1rem 1rem;
+        padding: 0.75rem 1rem;
+        border: 1px solid #a33;
+        border-radius: 0.5rem;
+        background: #1b1111;
+        color: #ffdede;
+        white-space: pre-wrap;
+        font: 14px/1.4 monospace;
+      }
     </style>
   </head>
   <body>
     <div id="gameContainer"></div>
     <script>
-      // Keep all runtime files from the same Unity build. Avoid intercepting
-      // fetch/XHR: the Unity loader must receive its original binary responses.
-      const buildUrl = "https://cdn.jsdelivr.net/gh/reeyuki/pttrwebport@main/";
+      // The loader is included in this repository. Load it locally so the page
+      // does not depend on jsDelivr being reachable for the bootstrap script.
+      // The matching hosted build config and its runtime assets are kept on
+      // the same CDN because the repository stores the large data file split
+      // into chunks rather than as Unity's single .data.unityweb file.
+      const hostedBuild = "https://cdn.jsdelivr.net/gh/reeyuki/pttrwebport@main/";
       const loader = document.createElement("script");
-      loader.src = new URL("Build/UnityLoader.js", buildUrl).href;
+      loader.src = new URL("./Build/UnityLoader.js", document.baseURI).href;
+      loader.onerror = () => showLoadError("Could not load ./Build/UnityLoader.js. Confirm the preview serves the repository root.");
       loader.onload = () => {
-        window.gameInstance = UnityLoader.instantiate(
-          "gameContainer",
-          new URL("Build/WebGL-Release.json", buildUrl).href,
-          {},
-        );
-      };
-      loader.onerror = () => {
-        document.body.textContent = "Could not load the Unity WebGL loader.";
+        try {
+          window.gameInstance = UnityLoader.instantiate(
+            "gameContainer",
+            new URL("Build/WebGL-Release.json", hostedBuild).href,
+            {},
+          );
+        } catch (error) {
+          showLoadError(error?.message || String(error));
+        }
       };
       document.body.appendChild(loader);
 
-      // Unity handles the canvas backing resolution itself; notify it when the
-      // preview iframe changes size so its camera viewport is recalculated.
-      let resizeFrame = 0;
-      const notifyUnityOfResize = () => {
-        cancelAnimationFrame(resizeFrame);
-        resizeFrame = requestAnimationFrame(() => {
-          window.dispatchEvent(new Event("resize"));
-        });
-      };
-      window.addEventListener("resize", notifyUnityOfResize);
-      window.addEventListener("orientationchange", notifyUnityOfResize);
-      if (window.visualViewport) {
-        window.visualViewport.addEventListener("resize", notifyUnityOfResize);
+      function showLoadError(message) {
+        console.error("Unity WebGL startup error:", message);
+        const panel = document.createElement("pre");
+        panel.id = "loadError";
+        panel.textContent = "Unity WebGL startup error: " + message;
+        document.body.appendChild(panel);
       }
-      new ResizeObserver(notifyUnityOfResize).observe(
-        document.getElementById("gameContainer"),
-      );
+
+      const resizeObserver = new ResizeObserver(() => {
+        window.dispatchEvent(new Event("resize"));
+      });
+      resizeObserver.observe(document.getElementById("gameContainer"));
+      window.addEventListener("resize", () => {
+        window.dispatchEvent(new Event("resize"));
+      });
     </script>
   </body>
 </html>
