@@ -6,7 +6,8 @@ export default defineConfig({
     host: '0.0.0.0',
     port: 3000,
     strictPort: false,
-    allowedHosts: ['sb-2lrx5nzdwyi3.vercel.run'],
+    // Vercel preview hostnames are generated and can change between sessions.
+    allowedHosts: ['.vercel.run'],
   },
   preview: {
     host: '0.0.0.0',
