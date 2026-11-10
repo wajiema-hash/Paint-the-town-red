@@ -2,166 +2,83 @@
 <html lang="en-us">
   <head>
     <meta charset="utf-8" />
-    <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Paint The Town Red</title>
     <style>
       html,
-      body {
+      body,
+      #gameContainer {
+        width: 100%;
+        height: 100%;
+        min-width: 0;
+        min-height: 0;
         margin: 0;
         padding: 0;
-        width: 100%;
-        height: 100%;
         overflow: hidden;
-        background: #0f0f0f;
-        color: #e6e6e6;
-        font-family: system-ui, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
       }
-      #gameContainer {
-        width: 100vw;
-        height: 100vh;
-        position: relative;
+
+      html,
+      body {
+        position: fixed;
+        inset: 0;
         background: #231f20;
       }
-      #gameContainer canvas {
-        width: 100%;
-        height: 100%;
-        display: block;
+
+      #gameContainer {
+        position: absolute;
+        inset: 0;
+        background: #231f20;
       }
-      #loadError {
-        position: fixed;
-        inset: auto 1rem 1rem;
-        z-index: 10;
-        max-height: 35vh;
-        overflow: auto;
-        padding: 0.75rem 1rem;
-        border: 1px solid #a33;
-        border-radius: 0.5rem;
-        background: #1b1111;
-        color: #ffdede;
-        white-space: pre-wrap;
-        font: 14px/1.4 monospace;
+
+      #gameContainer canvas {
+        position: absolute !important;
+        inset: 0;
+        display: block;
+        width: 100% !important;
+        height: 100% !important;
+        max-width: none !important;
+        max-height: none !important;
+        border: 0;
       }
     </style>
   </head>
   <body>
     <div id="gameContainer"></div>
     <script>
-      const baseUrl = new URL("./", window.location.href).href;
-      const dataFile = "Build/WebGL-Release.data.unityweb";
-      const chunkCount = 6;
-      const assetCache = {};
+      // Keep all runtime files from the same Unity build. Avoid intercepting
+      // fetch/XHR: the Unity loader must receive its original binary responses.
+      const buildUrl = "https://cdn.jsdelivr.net/gh/reeyuki/pttrwebport@main/";
+      const loader = document.createElement("script");
+      loader.src = new URL("Build/UnityLoader.js", buildUrl).href;
+      loader.onload = () => {
+        window.gameInstance = UnityLoader.instantiate(
+          "gameContainer",
+          new URL("Build/WebGL-Release.json", buildUrl).href,
+          {},
+        );
+      };
+      loader.onerror = () => {
+        document.body.textContent = "Could not load the Unity WebGL loader.";
+      };
+      document.body.appendChild(loader);
 
-      function showLoadError(error) {
-        console.error("Unity WebGL failed to load:", error);
-        let panel = document.getElementById("loadError");
-        if (!panel) {
-          panel = document.createElement("pre");
-          panel.id = "loadError";
-          document.body.appendChild(panel);
-        }
-        panel.textContent = "Unable to load the game. " + (error?.message || error);
+      // Unity handles the canvas backing resolution itself; notify it when the
+      // preview iframe changes size so its camera viewport is recalculated.
+      let resizeFrame = 0;
+      const notifyUnityOfResize = () => {
+        cancelAnimationFrame(resizeFrame);
+        resizeFrame = requestAnimationFrame(() => {
+          window.dispatchEvent(new Event("resize"));
+        });
+      };
+      window.addEventListener("resize", notifyUnityOfResize);
+      window.addEventListener("orientationchange", notifyUnityOfResize);
+      if (window.visualViewport) {
+        window.visualViewport.addEventListener("resize", notifyUnityOfResize);
       }
-
-      // Array.from is intentional: Array.prototype.map skips empty array slots.
-      // These assets are split into six numbered chunks in the repository.
-      Promise.all(
-        Array.from({ length: chunkCount }, (_, index) => {
-          const url = new URL(
-            `Build/WebGL-Release.data${String(index).padStart(2, "0")}`,
-            baseUrl,
-          );
-          return fetch(url)
-            .then((response) => {
-              if (!response.ok) {
-                throw new Error(`Could not load data chunk ${index}: HTTP ${response.status}`);
-              }
-              return response.arrayBuffer();
-            })
-            .then((buffer) => new Uint8Array(buffer));
-        }),
-      )
-        .then((chunks) => {
-          const totalLength = chunks.reduce((total, chunk) => total + chunk.length, 0);
-          const combinedData = new Uint8Array(totalLength);
-          let offset = 0;
-          for (const chunk of chunks) {
-            combinedData.set(chunk, offset);
-            offset += chunk.length;
-          }
-          assetCache[dataFile] = combinedData;
-          assetCache[dataFile.split("/").pop()] = combinedData;
-
-          const originalFetch = window.fetch.bind(window);
-          window.fetch = function (input, init) {
-            const url = typeof input === "string" ? input : input?.url || "";
-            for (const key of Object.keys(assetCache)) {
-              if (url.includes(key)) {
-                return Promise.resolve(
-                  new Response(assetCache[key].slice(), {
-                    status: 200,
-                    headers: { "Content-Type": "application/octet-stream" },
-                  }),
-                );
-              }
-            }
-            return originalFetch(input, init);
-          };
-
-          const originalOpen = XMLHttpRequest.prototype.open;
-          const originalSend = XMLHttpRequest.prototype.send;
-          XMLHttpRequest.prototype.open = function (method, url) {
-            this._unityUrl = url;
-            return originalOpen.apply(this, arguments);
-          };
-          XMLHttpRequest.prototype.send = function () {
-            const url = String(this._unityUrl || "");
-            const key = Object.keys(assetCache).find((candidate) => url.includes(candidate));
-            if (!key) return originalSend.apply(this, arguments);
-
-            const request = this;
-            const data = assetCache[key];
-            setTimeout(() => {
-              Object.defineProperty(request, "status", { value: 200, configurable: true });
-              Object.defineProperty(request, "statusText", { value: "OK", configurable: true });
-              Object.defineProperty(request, "readyState", { value: 4, configurable: true });
-              Object.defineProperty(request, "response", {
-                get: () => data.slice().buffer,
-                configurable: true,
-              });
-              Object.defineProperty(request, "responseText", { value: "", configurable: true });
-              Object.defineProperty(request, "responseURL", { value: url, configurable: true });
-              request.onreadystatechange?.(new Event("readystatechange"));
-              request.onload?.(
-                new ProgressEvent("load", {
-                  lengthComputable: true,
-                  loaded: data.length,
-                  total: data.length,
-                }),
-              );
-              request.dispatchEvent(new Event("load"));
-              request.dispatchEvent(new Event("loadend"));
-              request.onloadend?.(new ProgressEvent("loadend"));
-            }, 0);
-          };
-
-          const loader = document.createElement("script");
-          loader.src = new URL("Build/UnityLoader.js", baseUrl).href;
-          loader.onerror = () => showLoadError(new Error("Could not load Build/UnityLoader.js"));
-          loader.onload = () => {
-            try {
-              window.gameInstance = UnityLoader.instantiate(
-                "gameContainer",
-                new URL("Build/WebGL-Release.json", baseUrl).href,
-                {},
-              );
-            } catch (error) {
-              showLoadError(error);
-            }
-          };
-          document.body.appendChild(loader);
-        })
-        .catch(showLoadError);
+      new ResizeObserver(notifyUnityOfResize).observe(
+        document.getElementById("gameContainer"),
+      );
     </script>
   </body>
 </html>
